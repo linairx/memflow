@@ -302,41 +302,22 @@ pub trait MemoryView: Send {
     where
         Self: Sized,
     {
-        // 2Kb threshold
-        const STACK_THRESHOLD: usize = 2048;
+        // Use stack allocation for small types
+        let mut uninit = std::mem::MaybeUninit::<T>::uninit();
 
-        // If block will be optimized out by the compiler
-        if std::mem::size_of::<T>() <= STACK_THRESHOLD {
-            // Use stack allocation for small types
-            let mut uninit = std::mem::MaybeUninit::<T>::uninit();
-
-            // Explicitly zero out the memory
-            unsafe {
-                std::ptr::write_bytes(uninit.as_mut_ptr(), 0, 1);
-            }
-
-            let buf = unsafe {
-                std::slice::from_raw_parts_mut(
-                    uninit.as_mut_ptr() as *mut u8,
-                    std::mem::size_of::<T>(),
-                )
-            };
-            self.read_raw_into(addr, buf).map_data(|_| {
-                // Safety: Memory is zero-initialized and read_raw_into has read
-                // whatever it could. It is now safe to assume_init for Pod types.
-                unsafe { uninit.assume_init() }
-            })
-        } else {
-            // Use heap allocation for larger types
-            let mut buf = vec![0u8; std::mem::size_of::<T>()];
-            self.read_raw_into(addr, &mut buf).map_data(|_| {
-                // Safety: This is safe because:
-                // 1. T: Pod means it's safe to transmute from any bit pattern
-                // 2. Buffer is exactly size_of::<T>() bytes and zero-initialized
-                // 3. Any unread portions remain zero (safe for Pod types)
-                unsafe { std::ptr::read(buf.as_ptr() as *const T) }
-            })
+        // Explicitly zero out the memory
+        unsafe {
+            std::ptr::write_bytes(uninit.as_mut_ptr(), 0, 1);
         }
+
+        let buf = unsafe {
+            std::slice::from_raw_parts_mut(uninit.as_mut_ptr() as *mut u8, std::mem::size_of::<T>())
+        };
+        self.read_raw_into(addr, buf).map_data(|_| {
+            // Safety: Memory is zero-initialized and read_raw_into has read
+            // whatever it could. It is now safe to assume_init for Pod types.
+            unsafe { uninit.assume_init() }
+        })
     }
 
     #[skip_func]
